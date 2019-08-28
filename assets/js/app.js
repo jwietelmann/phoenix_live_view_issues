@@ -26,7 +26,7 @@ window.liveSocket = liveSocket
 
 View.prototype._originalUpdate = View.prototype.update
 View.prototype.update = function(diff) {
-  console.log(JSON.stringify(diff, null, 2))
+  console.log("Diff:")
   console.log(diff)
   this._originalUpdate(diff)
 }

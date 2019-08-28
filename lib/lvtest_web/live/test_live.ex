@@ -41,7 +41,13 @@ defmodule LvtestWeb.Nodes do
   def list_all() do
     :ets.tab2list(@ets_table_name)
     |> Enum.map(fn {_, v} -> v end)
-    |> Enum.sort_by(&(&1.counter))
+    |> Enum.sort(fn a, b ->
+      if a.counter == b.counter do
+        a.id <= b.id
+      else
+        a.counter < b.counter
+      end
+    end)
   end
 
   @pubsub_server Lvtest.PubSub
@@ -61,10 +67,27 @@ end
 
 defmodule LvtestWeb.TestLive do
   use Phoenix.LiveView
+  use Phoenix.HTML
   alias LvtestWeb.{Nodes, Node}
 
   def render(assigns) do
     ~L"""
+    <h2>Challenges with LiveView and lists</h2>
+    <p>
+      In the example below, the parent LiveView contains a list of Node IDs, ordered by the Nodes' counters.
+      It contains child LiveViews that fetch and render their respective Nodes.
+    </p>
+    <p>
+      Incrementing a Node's counter can cause this order to change.
+      Whenever the order changes, the list of IDs updates.
+      Whenever the list of IDs updates, <em>every single child view gets re-mounted and fully re-rendered</em>.
+    </p>
+    <p>
+      The more child views in the list, and the larger the HTML they render, the bigger the problem becomes.
+    </p>
+    <p>
+      <%= link "nodes++", to: "#", phx_click: "create", phx_value: Enum.count(@node_ids) + 1 %>
+    </p>
     <ul>
       <%= for node_id <- @node_ids do %>
         <%= Phoenix.LiveView.live_render(@socket, LvtestWeb.NodeLive, child_id: node_id, session: %{node_id: node_id}) %>
@@ -93,6 +116,13 @@ defmodule LvtestWeb.TestLive do
   def handle_info(%Node{}, socket) do
     {:noreply, update_node_ids(socket)}
   end
+
+  def handle_event("create", id_string, socket) do
+    {id, _} = Integer.parse(id_string)
+    Nodes.create(id)
+
+    {:noreply, socket}
+  end
 end
 
 defmodule LvtestWeb.NodeLive do
@@ -103,17 +133,24 @@ defmodule LvtestWeb.NodeLive do
   def render(%{node: node} = assigns) do
     # IO.inspect(assigns) # WHY DOES THIS MAKE A JS ERROR HAPPEN WHEN THE NODES SWITCH ORDER???
     ~L"""
-    <li>
+    <li id="node-<%= @node.id %>">
       <span>id: <%= @node.id %></span>,
       <span>counter: <%= @node.counter %></span>,
-      <span><%= link "++", to: "#", phx_click: "inc", phx_value: @node.id %></span>
+      <span>just_mounted?: <%= assigns[:just_mounted?] || false %></span>,
+      <span><%= link "counter++", to: "#", phx_click: "inc", phx_value: @node.id %></span>
     </li>
     """
   end
 
   def mount(%{node_id: node_id} = session, socket) do
     if connected?(socket), do: Nodes.subscribe(node_id)
-    {:ok, assign(socket, node: Nodes.get(node_id))}
+
+    socket =
+      socket
+      |> assign(just_mounted?: true, node: Nodes.get(node_id))
+      |> configure_temporary_assigns([:just_mounted?])
+
+    {:ok, socket}
   end
 
   def handle_info(%Node{id: update_id} = node, %{assigns: %{node: %{id: my_id}}} = socket) when my_id == update_id do
